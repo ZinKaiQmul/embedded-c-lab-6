@@ -1,0 +1,374 @@
+/*----------------------------------------------------------------------------
+    Code for Embedded Systems Lab 6 
+    
+    Poll the accelerometer and print x, y, and z axis values to the terminal
+    There is one thread
+       t_accel: polls the accelerometer.
+    
+ *---------------------------------------------------------------------------*/
+ 
+#include "cmsis_os2.h"
+#include <MKL25Z4.h>
+#include <stdbool.h>
+#include "../inc/rgb.h"
+#include "../inc/serialPort.h"
+#include "../inc/i2c.h"
+#include "../inc/accel.h"
+#include "..\inc\led.h"
+
+/*--------------------------------------------------------------
+ *   Thread t_accel
+ *      Read accelarations periodically  
+ *      Write results to terminal
+ *      Toggle green LED on each poll
+ *--------------------------------------------------------------*/
+osThreadId_t t_accel;      /* id of thread to poll accelerometer */
+
+// convert signed integer +/- 999 to +/-X.XX
+//   SX.XX
+//   01234
+void aToString(int16_t a, char* s) 
+{  
+    bool negative = false ;
+    if (a < 0) 
+		{
+        a = -a ;
+        negative = true ; 
+    }
+
+    // get digits
+    s[4] = '0' + (a % 10) ;
+    a = a / 10 ;
+    s[3] = '0' + (a % 10) ;
+    a = a / 10 ;
+    s[1] = '0' + (a % 10) ;
+        
+    // set sign
+    s[0] = '+' ;
+    if (negative) {
+        s[0] = '-' ;
+    }
+}
+
+char xyzStr[] = "X=SX.XX Y=SX.XX Z=SX.XX" ;
+//               01234567890123456789012
+	enum controlMsg_t{Flat10, Right2, Up3};//control message for the activity 3
+	osMessageQueueId_t controlMsgQ;//message queue
+#define Flat (5)
+#define Over (6)
+#define Right (7)
+#define Left (8)
+#define Up (9)
+#define Down (10)
+#define Inter (11)
+void accelThread(void *arg) {
+    int16_t xyz[3] ; // array of values from accelerometer
+        // signed integers in range +8191 (+2g) to -8192 (-2g)
+    sendMsg("Accel init test", CRLF) ;
+    // initialise green LED
+    setRGB(GREEN, RGB_ON) ;
+    int state = RGB_ON ;
+    int message= Inter;
+    // initialise accelerometer
+    int aOk = initAccel() ;//initialise acceloemomter
+    if (aOk) {
+        sendMsg("Accel init ok", CRLF) ;// check if it is ok print ok message in cool terminal
+    } else {
+        sendMsg("Accel init failed", CRLF) ;// print not ok message
+    }
+		sendMsg("Accel init test2", CRLF) ;// another test for accelemometer
+					
+    while(1) {
+        osDelay(20) ;
+        readXYZ(xyz) ; // read X, Y Z values
+        
+        // write X scaled integer
+        aToString((xyz[0] * 100) / 4096, &xyzStr[2]) ;// integers to strings in a character array
+        
+        // write Y scaled integer
+        aToString((xyz[1] * 100) / 4096, &xyzStr[10]) ;
+        
+        // write Z scaled integer
+        aToString((xyz[2] * 100) / 4096, &xyzStr[18]) ;
+        //sendMsg(xyzStr, CRLF) ; //inside the while loop so it will keep sending message 
+			int x =(xyz[0]* 100) / 4096;//turn the g acceleration into 
+			int y =(xyz[1]* 100) / 4096;
+			int z =(xyz[2]* 100) / 4096;
+				if(x*x+y*y+z*z<=10000)
+				{
+					
+				switch(message){
+				case Flat:// flat case state
+							
+								
+								if(z<80)// test if it should go to intermediate state
+								{
+
+									message=Inter;// assigned to intermediate state
+								}
+	
+							break ;
+							
+					
+				case Over:
+							
+								
+								if(z>-80)
+									{
+
+										message=Inter;
+									}
+							break ;
+							
+					
+				case Right:
+							
+								
+								if(y>-80)
+									{
+
+										message=Inter;
+									}
+							break ;
+							
+					
+				case Left:
+					
+							if(y<80)
+									{
+
+										message=Inter;
+									}
+								
+
+							break ;
+						
+				case Up:
+					
+							if(x>-80)
+									{
+										message=Inter;
+									}
+								
+
+							break ;
+				case Down:
+							if(x<80)
+									{
+										message=Inter;
+									}
+
+
+							break ;
+
+				case Inter:// intermediate state
+				if(z>90)
+				{
+					sendMsg("flat", CRLF) ;// send flat message to terminal
+					message=Flat;//next state flat
+				}
+				
+				if(z<-90)
+				{
+					sendMsg("over", CRLF) ;
+					message=Over;
+					
+				}
+				
+				if(y<-90)
+				{
+					sendMsg("right", CRLF) ;
+					message=Right;
+				}
+				
+				if(y>90)
+				{
+					sendMsg("left", CRLF) ;
+					message=Left;
+				}
+				
+				if(x<-90)
+				{
+					sendMsg("up", CRLF) ;
+					message=Up;
+				}
+				
+				if(x>90)
+				{
+					sendMsg("down", CRLF) ;
+					message=Down;
+				}
+				
+					break;
+				}
+			}
+        // toggle green LED
+                    
+    }
+}
+/*
+define the different states below for assignment activity 3
+*/
+#define PowerOn 20
+#define Wait_10s 21
+#define Wait_2s 22
+#define Wait_4s 23
+#define Another_Flat 24
+#define timeError 25
+#define stateError 26
+
+void TimeSequenceThread (void *arg){
+	int States = PowerOn;//intialise poweron state
+	enum controlMsg_t msg;//intialise control msg
+	osStatus_t status;	//return message queue
+	uint32_t delay = 10000;//intialise delay
+	int time;//delay timer declaration
+	int delay1 =6000;//delay time 6seconds
+	int delay2 =8000;//delay time 8seconds
+	status = osMessageQueueGet(controlMsgQ, &msg, NULL, 1);//message queue;
+	
+	while(1){
+	status = osMessageQueueGet(controlMsgQ, &msg, NULL, delay);
+		
+		switch(States)
+		{
+			case PowerOn:
+				if(msg==Flat10)//flat state
+				{
+					States=Wait_10s;// switch to wait 10 sec state
+				}
+				else{
+				sendMsg("State Sequence Error", CRLF);
+					setRGB(GREEN, RGB_OFF);
+					setRGB(RED, RGB_ON);//turn on red rgb led only
+					States=stateError;// state change to state sequence error
+				}
+				break;
+			case Wait_10s:
+				if (time<delay)
+				{
+					sendMsg("State Time Error", CRLF);//time error to terminal
+					setRGB(GREEN, RGB_OFF);
+					setRGB(RED, RGB_ON);//turn only red rgb led
+					States=timeError;// change to time error state
+				}
+				else if (time>= delay && msg==Right2)//test how long at least 10 sec and next state is right
+				{
+					States = Wait_2s;//wait for at least 2 seconds in the next state
+					ledOnOff (LED1, LED_ON);
+					ledOnOff (LED2, LED_ON);// turn on the first 2 shield leds
+					ledOnOff (LED3, LED_OFF);
+					ledOnOff (LED4, LED_OFF);
+					ledOnOff (LED5, LED_OFF);
+					delay =2000;
+					
+				}
+				break;
+				case Wait_2s:
+				if (time<delay)
+				{
+					sendMsg("State Time Error", CRLF);
+					setRGB(GREEN, RGB_OFF);
+					setRGB(RED, RGB_ON);//Turn only red rgb led
+					States=timeError;
+				}
+				else if (time>=delay1 && msg == Up3)// test if up state is long enough and is in correct orientation
+				{
+					States = Wait_4s;
+					ledOnOff (LED1, LED_ON);// turn on 3 shields leds
+					ledOnOff (LED2, LED_ON);
+					ledOnOff (LED3, LED_ON);
+					ledOnOff (LED4, LED_OFF);
+					ledOnOff (LED5, LED_OFF);
+					delay =2000;// set new delay
+					
+				}
+				else if(msg!=Right2)//not right 
+				{
+					sendMsg("State Sequence error", CRLF);// wrong sequence error to terminal message
+					setRGB(GREEN, RGB_OFF);
+					setRGB(RED, RGB_ON);
+					States=stateError;// next state state sequence error
+				}
+				break;
+			case Wait_4s:
+				if (time<delay)
+				{
+					sendMsg("State Time Error", CRLF);
+					setRGB(GREEN, RGB_OFF);
+					setRGB(RED, RGB_ON);
+					States = timeError;
+				}
+				else if (time>=delay2 && msg == Up3)
+				{
+					setRGB(GREEN, RGB_ON);//green rgb led only
+					setRGB(RED, RGB_OFF);
+					States = Another_Flat;// final state 
+				}
+				else if(msg!=Up)
+				{
+					sendMsg("State Sequence error", CRLF);
+					setRGB(GREEN, RGB_OFF);
+					setRGB(RED, RGB_ON);//rgb led red only
+					States = stateError;// next sequence error state
+				}
+				break;
+			case Another_Flat:// final flat state
+				  ledOnOff (LED1, LED_OFF);// turn off shield leds
+					ledOnOff (LED2, LED_OFF);
+					ledOnOff (LED3, LED_OFF);
+					ledOnOff (LED4, LED_OFF);
+					ledOnOff (LED5, LED_OFF);
+			case timeError://state time error state
+				  ledOnOff (LED1, LED_OFF);// turn off shield leds
+					ledOnOff (LED2, LED_OFF);
+					ledOnOff (LED3, LED_OFF);
+					ledOnOff (LED4, LED_OFF);
+					ledOnOff (LED5, LED_OFF);
+			case stateError://state sequence error state
+				  ledOnOff (LED1, LED_OFF);// turn off shield leds
+					ledOnOff (LED2, LED_OFF);
+					ledOnOff (LED3, LED_OFF);
+					ledOnOff (LED4, LED_OFF);
+					ledOnOff (LED5, LED_OFF);
+				
+				
+		}
+	}
+}
+
+
+/*----------------------------------------------------------------------------
+ * Application main
+ *   Initialise I/O
+ *   Initialise kernel
+ *   Create threads
+ *   Start kernel
+ *---------------------------------------------------------------------------*/
+
+int main (void) { 
+    
+    // System Initialization
+    SystemCoreClockUpdate();
+
+    //configureGPIOinput();
+    init_UART0(115200) ;
+
+    // Initialize CMSIS-RTOS
+    osKernelInitialize();
+    
+    // initialise serial port 
+    initSerialPort() ;
+
+    // Initialise I2C0 for accelerometer 
+    i2c_init() ;
+    
+    // Initialise GPIO for on-board RGB LED
+    configureRGB() ;
+    
+    // Create threads
+    t_accel = osThreadNew(accelThread, NULL, NULL); 
+ 
+    osKernelStart();    // Start thread execution - DOES NOT RETURN
+    for (;;) {}         // Only executed when an error occurs
+}
